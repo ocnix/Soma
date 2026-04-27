@@ -186,7 +186,7 @@ func (m *model) viewPlaying() string {
 		}
 	}
 
-	orb := orbitalView(s.Phase, orbitW, orbitH, s.Paused)
+	orb := renderViz(m.vizMode, s.Phase, s.LevelL, s.LevelR, orbitW, orbitH, s.Paused)
 	orbCentered := lipgloss.Place(m.width-2, orbitH, lipgloss.Center, lipgloss.Center, orb)
 
 	main := lipgloss.JoinVertical(lipgloss.Left,
@@ -210,13 +210,14 @@ func (m *model) viewPlaying() string {
 	return main
 }
 
-// Minimal view — orbital + tiny status line only.
+// Minimal view — visualizer + tiny status line only.
 func (m *model) viewMinimalist(s state.Snapshot) string {
 	w, h := m.width, m.height
-	orb := orbitalView(s.Phase, w-4, h-4, s.Paused)
+	orb := renderViz(m.vizMode, s.Phase, s.LevelL, s.LevelR, w-4, h-4, s.Paused)
 	orbCentered := lipgloss.Place(w, h-2, lipgloss.Center, lipgloss.Center, orb)
 	footer := helpStyle.Render(
 		fmtDur(s.Elapsed) + " / " + fmtDur(s.Duration) + "   " +
+			keyStyle.Render("v") + " viz   " +
 			keyStyle.Render("m") + " exit minimal   " +
 			keyStyle.Render("esc") + " back",
 	)
@@ -350,7 +351,8 @@ func (m *model) renderStatusPane(s state.Snapshot, width int) string {
 			keyStyle.Render("m") + " min",
 	)
 	help3 := helpStyle.Render(
-		keyStyle.Render("t") + " theme   " +
+		keyStyle.Render("v") + " viz (" + m.vizMode.Name() + ")   " +
+			keyStyle.Render("t") + " theme   " +
 			keyStyle.Render("esc") + " back   " +
 			keyStyle.Render("q") + " quit",
 	)

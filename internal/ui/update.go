@@ -189,6 +189,10 @@ func (m *model) updatePlaying(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.togglePomodoro()
 	case "m":
 		m.minimalist = !m.minimalist
+	case "v":
+		m.vizMode = nextViz(m.vizMode)
+		m.profile.Viz = m.vizMode.Name()
+		m.saveProfile()
 	case "t":
 		m.cycleTheme()
 	case "S":

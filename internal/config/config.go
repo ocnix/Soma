@@ -24,6 +24,7 @@ type Profile struct {
 	BinauralOn   bool    `json:"binaural_on"`
 	BinauralBeat float64 `json:"binaural_beat"` // Hz
 	Theme        string  `json:"theme"`
+	Viz          string  `json:"viz"` // "sphere" | "lissajous" | "tunnel" | "orbit"
 	VolumeDb     float64 `json:"volume_db"`
 }
 
@@ -38,6 +39,7 @@ var Default = Profile{
 	BinauralOn:   false,
 	BinauralBeat: 8.0,
 	Theme:        "coffee",
+	Viz:          "sphere",
 	VolumeDb:     0,
 }
 

@@ -49,6 +49,7 @@ func Run(initialPath string, profile config.Profile) error {
 		recentsCursor: -1,
 		todayTotal:    config.TodayTotal(),
 		streak:        config.Streak(),
+		vizMode:       vizFromString(profile.Viz),
 	}
 
 	prog := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
@@ -115,6 +116,7 @@ type model struct {
 	pomodoroEnd      time.Time
 	pomodoroCycle    int
 	sleepEnd         *time.Time
+	vizMode          VizMode
 
 	// mouse hit regions on the playing screen
 	regions clickRegions
