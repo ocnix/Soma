@@ -2,6 +2,7 @@ package effect
 
 import (
 	"math"
+	"sync"
 
 	"github.com/gopxl/beep/v2"
 
@@ -14,13 +15,44 @@ import (
 type EightD struct {
 	src        beep.Streamer
 	sampleRate float64
-	rateHz     float64
-	phase      float64
 	st         *state.State
+
+	mu     sync.RWMutex
+	rateHz float64
+	bypass bool
+	phase  float64
 }
 
 func NewEightD(src beep.Streamer, sampleRate, rateHz float64, st *state.State) *EightD {
 	return &EightD{src: src, sampleRate: sampleRate, rateHz: rateHz, st: st}
+}
+
+func (e *EightD) SetRate(hz float64) {
+	if hz < 0.01 {
+		hz = 0.01
+	}
+	if hz > 2.0 {
+		hz = 2.0
+	}
+	e.mu.Lock()
+	e.rateHz = hz
+	e.mu.Unlock()
+	if e.st != nil {
+		e.st.SetRate(hz)
+	}
+}
+
+func (e *EightD) SetBypass(b bool) {
+	e.mu.Lock()
+	e.bypass = b
+	e.mu.Unlock()
+	if e.st != nil {
+		mode := "8D"
+		if b {
+			mode = "dry"
+		}
+		e.st.SetMode(mode)
+	}
 }
 
 func (e *EightD) Stream(samples [][2]float64) (int, bool) {
@@ -29,13 +61,23 @@ func (e *EightD) Stream(samples [][2]float64) (int, bool) {
 		return n, ok
 	}
 
-	inc := 2 * math.Pi * e.rateHz / e.sampleRate
-	for i := 0; i < n; i++ {
-		// Mono-sum so energy follows the pan, not the source's L/R imbalance.
-		mono := (samples[i][0] + samples[i][1]) * 0.5
+	e.mu.RLock()
+	bypass := e.bypass
+	rate := e.rateHz
+	e.mu.RUnlock()
 
-		pan := math.Sin(e.phase)             // -1..1
-		theta := (pan + 1) * math.Pi / 4     // 0..π/2
+	if bypass {
+		if e.st != nil {
+			e.st.SetPan(0)
+		}
+		return n, ok
+	}
+
+	inc := 2 * math.Pi * rate / e.sampleRate
+	for i := 0; i < n; i++ {
+		mono := (samples[i][0] + samples[i][1]) * 0.5
+		pan := math.Sin(e.phase)
+		theta := (pan + 1) * math.Pi / 4
 		samples[i][0] = mono * math.Cos(theta) * math.Sqrt2
 		samples[i][1] = mono * math.Sin(theta) * math.Sqrt2
 
@@ -46,6 +88,7 @@ func (e *EightD) Stream(samples [][2]float64) (int, bool) {
 	}
 	if e.st != nil {
 		e.st.SetPan(math.Sin(e.phase))
+		e.st.SetPhase(e.phase)
 	}
 	return n, ok
 }

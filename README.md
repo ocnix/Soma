@@ -37,37 +37,44 @@ go build -o soma .
 
 ### Keys
 
-| screen   | key       | action                |
-| -------- | --------- | --------------------- |
-| home     | `enter`   | play the input        |
-| home     | `q`       | quit                  |
-| loading  | `esc`     | cancel, back to home  |
-| playing  | `space`   | pause / resume        |
-| playing  | `esc`     | stop, back to home    |
-| any      | `ctrl+c`  | hard quit             |
+| screen   | key        | action                |
+| -------- | ---------- | --------------------- |
+| home     | `enter`    | play the input        |
+| home     | `esc`      | quit                  |
+| loading  | `esc`      | cancel, back to home  |
+| playing  | `space`    | pause / resume        |
+| playing  | `← / →`    | seek ±5 s             |
+| playing  | `↑ / ↓`    | volume ±2 dB          |
+| playing  | `[` / `]`  | 8D rate −/+ 0.05 Hz   |
+| playing  | `r`        | toggle reverb         |
+| playing  | `d`        | toggle 8D / dry       |
+| playing  | `esc`      | back to home          |
+| playing  | `q`        | quit                  |
+| any      | `ctrl+c`   | hard quit             |
 
 Supported formats: mp3, wav, flac.
 
 ## How it works
 
 ```
-file/yt-dlp ─▶ decoder ─▶ 8D pan ─▶ meter ─▶ speaker
-                            │         │
-                            ▼         ▼
-                          state (read by TUI @ 30 Hz)
+file/yt-dlp ─▶ decoder ─▶ 8D pan ─▶ reverb ─▶ meter ─▶ volume ─▶ speaker
+                              │        │        │
+                              ▼        ▼        ▼
+                            state (snapshotted by TUI @ 30 Hz)
 ```
 
-- **Source** (`internal/source`) — local path or YouTube URL. YouTube goes through `yt-dlp` to a temp mp3.
+- **Source** (`internal/source`) — local path or YouTube URL. YouTube goes through `yt-dlp -x --audio-format mp3`, preserving the title in the filename.
 - **Decode** (`internal/player`) — `gopxl/beep` decoders (mp3/wav/flac).
-- **8D effect** (`internal/effect/eightd.go`) — wraps the stream, mono-sums each sample, then equal-power-pans it across the stereo field driven by a sine LFO. Equal-power keeps perceived loudness flat as the sound moves.
-- **Meter** (`internal/effect/meter.go`) — peak L/R levels with fast attack / slow release, pushed to shared state.
-- **TUI** (`internal/ui`) — Bubble Tea + lipgloss, coffee-toned palette. Spatial position dot, VU meters with green/yellow/red zones, elapsed/total time, mode + LFO rate. `q` to quit.
+- **8D effect** (`internal/effect/eightd.go`) — mono-sums then equal-power-pans across the stereo field driven by a sine LFO. Equal-power keeps perceived loudness flat as the sound moves.
+- **Reverb** (`internal/effect/reverb.go`) — tiny Schroeder reverb (4 combs → 2 allpasses) for room/depth. Mono wet, mixed equally into both channels, so the dry-panned source moves while the room stays still.
+- **Meter** (`internal/effect/meter.go`) — peak L/R levels with fast attack / slow release.
+- **Volume** — beep `effects.Volume` (log2 base) for the master fader.
+- **TUI** (`internal/ui`) — full-screen Bubble Tea + lipgloss. Orbital visualizer (sound orbiting your head as a 2D ellipse with a comet trail), VU meters, full-width progress bar with scrubber, status pane with all live values + keybindings. Coffee-toned palette.
 - **Output** — `gopxl/beep/speaker` (CoreAudio on macOS via `oto`).
 
 ## Roadmap
 
-- Reverb tail for spatial depth
-- Pause / seek / volume keybindings
-- Playlist + queue
+- Recents / queue persisted to `~/.cache/soma`
+- Streaming YouTube (skip the full download)
 - HRTF convolution (true binaural) as an opt-in mode
 - Crossfade between tracks

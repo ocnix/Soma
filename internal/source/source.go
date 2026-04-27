@@ -43,10 +43,11 @@ func downloadYouTube(url string) (string, func(), error) {
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 
-	out := filepath.Join(dir, "track.%(ext)s")
+	out := filepath.Join(dir, "%(title)s.%(ext)s")
 	cmd := exec.Command("yt-dlp",
 		"-x", "--audio-format", "mp3",
 		"--no-progress",
+		"--no-playlist",
 		"-o", out,
 		url,
 	)
@@ -58,7 +59,7 @@ func downloadYouTube(url string) (string, func(), error) {
 		return "", noop, fmt.Errorf("yt-dlp failed: %w", err)
 	}
 
-	matches, _ := filepath.Glob(filepath.Join(dir, "track.*"))
+	matches, _ := filepath.Glob(filepath.Join(dir, "*.mp3"))
 	if len(matches) == 0 {
 		cleanup()
 		return "", noop, fmt.Errorf("yt-dlp produced no output")
