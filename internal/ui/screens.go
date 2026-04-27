@@ -186,7 +186,7 @@ func (m *model) viewPlaying() string {
 		}
 	}
 
-	orb := renderViz(m.vizMode, s.Phase, s.LevelL, s.LevelR, orbitW, orbitH, s.Paused)
+	orb := renderViz(m.vizMode, s.Phase, s.LevelL, s.LevelR, s.Bands, orbitW, orbitH, s.Paused)
 	orbCentered := lipgloss.Place(m.width-2, orbitH, lipgloss.Center, lipgloss.Center, orb)
 
 	main := lipgloss.JoinVertical(lipgloss.Left,
@@ -213,7 +213,7 @@ func (m *model) viewPlaying() string {
 // Minimal view — visualizer + tiny status line only.
 func (m *model) viewMinimalist(s state.Snapshot) string {
 	w, h := m.width, m.height
-	orb := renderViz(m.vizMode, s.Phase, s.LevelL, s.LevelR, w-4, h-4, s.Paused)
+	orb := renderViz(m.vizMode, s.Phase, s.LevelL, s.LevelR, s.Bands, w-4, h-4, s.Paused)
 	orbCentered := lipgloss.Place(w, h-2, lipgloss.Center, lipgloss.Center, orb)
 	footer := helpStyle.Render(
 		fmtDur(s.Elapsed) + " / " + fmtDur(s.Duration) + "   " +

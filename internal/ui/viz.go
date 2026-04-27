@@ -16,9 +16,10 @@ const (
 	VizOrbit
 	VizLissajous
 	VizTunnel
+	VizSpectrum
 )
 
-var vizCycle = []VizMode{VizSphere, VizLissajous, VizTunnel, VizOrbit}
+var vizCycle = []VizMode{VizSphere, VizSpectrum, VizLissajous, VizTunnel, VizOrbit}
 
 func (v VizMode) Name() string {
 	switch v {
@@ -28,6 +29,8 @@ func (v VizMode) Name() string {
 		return "lissajous"
 	case VizTunnel:
 		return "tunnel"
+	case VizSpectrum:
+		return "spectrum"
 	default:
 		return "orbit"
 	}
@@ -50,6 +53,8 @@ func vizFromString(s string) VizMode {
 		return VizLissajous
 	case "tunnel":
 		return VizTunnel
+	case "spectrum":
+		return VizSpectrum
 	case "orbit":
 		return VizOrbit
 	}
@@ -57,7 +62,7 @@ func vizFromString(s string) VizMode {
 }
 
 // renderViz routes to the right visualizer.
-func renderViz(mode VizMode, phase, levelL, levelR float64, w, h int, paused bool) string {
+func renderViz(mode VizMode, phase, levelL, levelR float64, bands []float64, w, h int, paused bool) string {
 	switch mode {
 	case VizSphere:
 		return sphereView(phase, levelL, levelR, w, h, paused)
@@ -65,6 +70,8 @@ func renderViz(mode VizMode, phase, levelL, levelR float64, w, h int, paused boo
 		return lissajousView(phase, levelL, levelR, w, h, paused)
 	case VizTunnel:
 		return tunnelView(phase, levelL, levelR, w, h, paused)
+	case VizSpectrum:
+		return spectrumView(phase, bands, levelL, levelR, w, h, paused)
 	default:
 		return orbitalView(phase, w, h, paused)
 	}
@@ -391,6 +398,106 @@ func lissajousView(phase, lvlL, lvlR float64, w, h int, paused bool) string {
 		drawRing(c, cx, cy, math.Min(rx, ry/aspectY)*0.3*(0.6+level), aspectY, '·', 2)
 	}
 	c.put(int(cx), int(cy), '◍', 4)
+
+	if paused {
+		bigPause(c, int(cx), int(cy))
+	}
+	return c.render()
+}
+
+// ── Spectrum (radial FFT) ────────────────────────────────────────────────────
+
+// spectrumView renders a radial spectrum — bars fan out from the center, one
+// per FFT band. Bass at top, sweeping clockwise into treble. Sound source
+// orbits on the inner ring; head pulses with overall level.
+func spectrumView(phase float64, bands []float64, lvlL, lvlR float64, w, h int, paused bool) string {
+	c := newCanvas(w, h)
+	const aspectY = 0.5
+
+	cx := float64(w-1) / 2
+	cy := float64(h-1) / 2
+
+	innerR := math.Min(float64(w)/8, float64(h)/(4*aspectY))
+	if innerR < 3 {
+		innerR = 3
+	}
+	maxR := math.Min(float64(w)/2, float64(h)/(2*aspectY)) * 0.95
+	barLen := maxR - innerR
+
+	drawStars(c, phase*0.3)
+
+	if len(bands) == 0 {
+		// No FFT data yet — show a faint orbit + center.
+		drawRing(c, cx, cy, innerR, aspectY, '·', 1)
+		c.put(int(cx), int(cy), '◍', 4)
+		if paused {
+			bigPause(c, int(cx), int(cy))
+		}
+		return c.render()
+	}
+
+	n := len(bands)
+	// Bar palette by intensity along the bar.
+	for b := 0; b < n; b++ {
+		angle := -math.Pi/2 + float64(b)/float64(n)*2*math.Pi
+		mag := bands[b]
+		mag = clamp(mag, 0, 1)
+		// Slight low-end emphasis so kicks pop.
+		mag = math.Pow(mag, 0.85)
+
+		barL := mag * barLen
+		// Step radially outward, drawing one cell per radial unit.
+		steps := int(math.Round(barL))
+		for r := 0; r <= steps; r++ {
+			rad := innerR + float64(r)
+			x := int(math.Round(cx + rad*math.Sin(angle)))
+			y := int(math.Round(cy - rad*math.Cos(angle)*aspectY))
+			t := 0.0
+			if steps > 0 {
+				t = float64(r) / float64(steps)
+			}
+			ch := '·'
+			style := 1
+			switch {
+			case t < 0.3:
+				ch, style = '·', 1
+			case t < 0.6:
+				ch, style = ':', 2
+			case t < 0.85:
+				ch, style = '+', 3
+			default:
+				ch, style = '*', 5
+			}
+			c.put(x, y, ch, style)
+		}
+	}
+
+	// Inner ring suggesting "where the orbit is."
+	drawRing(c, cx, cy, innerR, aspectY, '·', 2)
+
+	// Sound source on the inner ring.
+	dx := int(math.Round(cx + innerR*math.Sin(phase)))
+	dy := int(math.Round(cy - innerR*math.Cos(phase)*aspectY))
+	c.put(dx, dy, '●', 5)
+
+	// Comet trail.
+	for k := 1; k <= 5; k++ {
+		p := phase - float64(k)*0.07
+		ix := int(math.Round(cx + innerR*math.Sin(p)))
+		iy := int(math.Round(cy - innerR*math.Cos(p)*aspectY))
+		if ix == dx && iy == dy {
+			continue
+		}
+		c.put(ix, iy, '∙', 6)
+	}
+
+	// Center head — pulses.
+	level := math.Max(lvlL, lvlR)
+	headChar := '◍'
+	if level > 0.5 {
+		headChar = '◉'
+	}
+	c.put(int(cx), int(cy), headChar, 4)
 
 	if paused {
 		bigPause(c, int(cx), int(cy))

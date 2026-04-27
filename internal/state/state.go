@@ -39,6 +39,9 @@ type State struct {
 	levelL float64
 	levelR float64
 
+	// FFT spectrum (log-spaced bands, 0..1 each)
+	bands []float64
+
 	// master
 	volumeDb float64
 }
@@ -63,6 +66,7 @@ type Snapshot struct {
 	BinauralBeat float64
 	LevelL       float64
 	LevelR       float64
+	Bands        []float64
 	VolumeDb     float64
 }
 
@@ -90,10 +94,19 @@ func (s *State) SetBinauralOn(on bool)         { s.mu.Lock(); s.binauralOn = on;
 func (s *State) SetBinauralBeat(hz float64)    { s.mu.Lock(); s.binauralBeat = hz; s.mu.Unlock() }
 func (s *State) SetDuration(d time.Duration)   { s.mu.Lock(); s.duration = d; s.mu.Unlock() }
 
+func (s *State) SetBands(bands []float64) {
+	s.mu.Lock()
+	if len(s.bands) != len(bands) {
+		s.bands = make([]float64, len(bands))
+	}
+	copy(s.bands, bands)
+	s.mu.Unlock()
+}
+
 func (s *State) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return Snapshot{
+	snap := Snapshot{
 		Title:        s.title,
 		Duration:     s.duration,
 		Elapsed:      s.elapsed,
@@ -115,4 +128,9 @@ func (s *State) Snapshot() Snapshot {
 		LevelR:       s.levelR,
 		VolumeDb:     s.volumeDb,
 	}
+	if len(s.bands) > 0 {
+		snap.Bands = make([]float64, len(s.bands))
+		copy(snap.Bands, s.bands)
+	}
+	return snap
 }

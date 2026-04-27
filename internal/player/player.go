@@ -215,7 +215,7 @@ func (s *Session) CycleNoise() {
 		return
 	}
 	cur := effect.NoiseFromString(s.State.Snapshot().NoiseMode)
-	next := (cur + 1) % 4
+	next := effect.NoiseMode((int(cur) + 1) % 8)
 	s.noise.SetMode(next)
 	s.State.SetNoiseMode(next.String())
 }
@@ -327,6 +327,7 @@ func Start(path string, cfg Config) (*Session, error) {
 
 	// Noise + binaural as parallel sources.
 	noise := effect.NewNoise(effect.NoiseFromString(cfg.NoiseMode), cfg.NoiseVolume)
+	noise.SetSampleRate(float64(format.SampleRate))
 	binaural := effect.NewBinaural(float64(format.SampleRate), cfg.BinauralBeat, 0.10)
 	binaural.SetEnabled(cfg.BinauralOn)
 
@@ -349,7 +350,8 @@ func Start(path string, cfg Config) (*Session, error) {
 	mixer.Add(noise)
 	mixer.Add(binaural)
 
-	metered := effect.NewMeter(mixer, st)
+	spectrum := effect.NewSpectrum(mixer, float64(format.SampleRate), 1024, 32, st)
+	metered := effect.NewMeter(spectrum, st)
 
 	vol := &effects.Volume{Streamer: metered, Base: 2, Volume: dbToLog(cfg.VolumeDb)}
 	if cfg.VolumeDb <= -50 {

@@ -59,7 +59,7 @@ Supported formats: mp3, wav, flac.
 | `S` | toggle shape (sine ↔ random walk) |
 | `d` | toggle 8D / dry |
 | `r` | toggle reverb |
-| `n` | cycle noise (off / white / pink / brown) |
+| `n` | cycle ambience (off / white / pink / brown / **rain** / **ocean** / **wind** / **fire**) |
 | `N` | noise volume +5% |
 | `b` | toggle binaural beats |
 | `f` | open Focus Lab |
@@ -108,7 +108,8 @@ file/yt-dlp ─▶ decoder ─▶ 8D pan ─▶ reverb ─┐
 - **Decode** (`internal/player`) — `gopxl/beep` decoders (mp3/wav/flac).
 - **8D effect** (`internal/effect/eightd.go`) — mono-sums then equal-power-pans across the stereo field. LFO is either a sine (smooth, predictable) or a smoothed random walk (organic, unpredictable — the brain doesn't tune it out as fast).
 - **Reverb** — Schroeder (4 combs → 2 allpasses), mono wet mixed equally into both channels so the dry-panned source moves while the room stays still.
-- **Noise** (`noise.go`) — white / pink (Voss-McCartney) / brown (leaky integrator). Layered under the music via `beep.Mixer`.
+- **Ambience** (`noise.go`) — white / pink (Voss-McCartney) / brown (leaky integrator) / **rain** (pink + tonal droplet bursts with quick decay) / **ocean** (brown + slow LFO waves) / **wind** (brown + double LFO gusts) / **fire** (brown + crackle bursts). Layered under the music via `beep.Mixer`.
+- **FFT spectrum** (`spectrum.go` + `internal/dsp/fft.go`) — Cooley-Tukey radix-2 FFT, 1024 samples, Hann-windowed, 32 log-spaced bands, attack/release smoothing per band. Drives the radial spectrum visualizer.
 - **Binaural beats** (`binaural.go`) — two slightly-detuned sines (carrier 200 Hz), beat frequency tunable in the Focus Lab.
 - **Meter** (`meter.go`) — peak L/R levels with fast attack / slow release.
 - **TUI** (`internal/ui`) — Bubble Tea + lipgloss. Full-screen layout with the orbital visualizer (sound orbiting your head as a 2D ellipse with a comet trail), VU meters, full-width progress bar, status pane with all live values + chips. Coffee/Midnight/Forest/Cream themes. Mouse clicks supported.
