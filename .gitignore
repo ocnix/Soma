@@ -1,0 +1,7 @@
+soma
+/bin/
+*.mp3
+*.wav
+*.flac
+*.m4a
+.DS_Store
