@@ -1,6 +1,6 @@
 # soma
 
-8D audio for focus. Plays local audio files or YouTube links and pans the sound around your head with a slow LFO so it stays moving — the goal is to occupy enough of the ADHD background process that the foreground task can actually run.
+8D audio for ADHD focus. Plays local audio files or YouTube links and pans the sound around your head with an LFO so it stays moving — the goal is to occupy enough of the ADHD background process that the foreground task can actually run.
 
 > *"Coffee is the modern soma."* — first drunk by Yemeni Sufis to stay focused through long nights of devotion.
 
@@ -14,67 +14,113 @@
 
 ```sh
 cd ~/code/soma
-go mod tidy
 go build -o soma .
 ```
 
 ## Use
 
 ```sh
-# interactive — paste a path or url into the home screen
+# interactive — paste a path or url, navigate recents, etc.
 ./soma
 
 # launch straight into a track
 ./soma ~/Music/track.mp3
 ./soma "https://www.youtube.com/watch?v=..."
 
-# tweak the rotation speed (default 0.15 Hz ≈ 6.7s per full sweep)
+# override saved rate for this session
 ./soma -rate 0.25
 
-# disable the effect, play normally
-./soma -dry
+# wipe the saved profile back to defaults
+./soma -reset
 ```
 
-### Keys
-
-| screen   | key        | action                |
-| -------- | ---------- | --------------------- |
-| home     | `enter`    | play the input        |
-| home     | `esc`      | quit                  |
-| loading  | `esc`      | cancel, back to home  |
-| playing  | `space`    | pause / resume        |
-| playing  | `← / →`    | seek ±5 s             |
-| playing  | `↑ / ↓`    | volume ±2 dB          |
-| playing  | `[` / `]`  | 8D rate −/+ 0.05 Hz   |
-| playing  | `r`        | toggle reverb         |
-| playing  | `d`        | toggle 8D / dry       |
-| playing  | `esc`      | back to home          |
-| playing  | `q`        | quit                  |
-| any      | `ctrl+c`   | hard quit             |
-
 Supported formats: mp3, wav, flac.
+
+## Keys
+
+### Home
+
+| key | action |
+|---|---|
+| `enter` | play the input (or selected recent) |
+| `↑` / `↓` | navigate recents |
+| `?` | random play from recents |
+| `t` | cycle theme |
+| `esc` | quit |
+
+### Playing
+
+| key | action |
+|---|---|
+| `space` | pause / resume |
+| `← / →` | seek ±5 s |
+| `↑ / ↓` | volume ±2 dB |
+| `[` / `]` | 8D rate −/+ 0.05 Hz |
+| `S` | toggle shape (sine ↔ random walk) |
+| `d` | toggle 8D / dry |
+| `r` | toggle reverb |
+| `n` | cycle noise (off / white / pink / brown) |
+| `N` | noise volume +5% |
+| `b` | toggle binaural beats |
+| `f` | open Focus Lab |
+| `g` | distraction inbox |
+| `s` | sleep timer |
+| `p` | toggle Pomodoro mode (25 / 5) |
+| `m` | minimalist mode |
+| `t` | cycle theme |
+| `esc` | back to home (logs the session) |
+| `q` | quit |
+
+### Mouse (any terminal that supports mouse)
+
+- **Click progress bar** → seek
+- **Scroll wheel** → volume
+- **Click chips** (8D / reverb / noise / binaural / play-state) → toggle
+
+### Focus Lab
+
+| key | action |
+|---|---|
+| `↑ / ↓` | select slider |
+| `← / →` or `+ / -` | adjust |
+| `1` / `2` / `3` / `4` | preset (calm / focus / stim / random walk) |
+| `f` or `esc` | close |
+
+## Files written
+
+`~/.config/soma/`:
+
+- `profile.json` — your tunable settings (rate, depth, shape, reverb, noise, binaural, theme, volume)
+- `recents.json` — last 10 played items
+- `sessions.json` — playback history (used for "today" and "streak" on home)
+- `inbox.md` — markdown bullets of distractions captured with `g`
 
 ## How it works
 
 ```
-file/yt-dlp ─▶ decoder ─▶ 8D pan ─▶ reverb ─▶ meter ─▶ volume ─▶ speaker
-                              │        │        │
-                              ▼        ▼        ▼
-                            state (snapshotted by TUI @ 30 Hz)
+file/yt-dlp ─▶ decoder ─▶ 8D pan ─▶ reverb ─┐
+                                              ├─▶ mixer ─▶ meter ─▶ volume ─▶ ctrl ─▶ speaker
+                                  noise ────┤
+                              binaural ────┘
 ```
 
-- **Source** (`internal/source`) — local path or YouTube URL. YouTube goes through `yt-dlp -x --audio-format mp3`, preserving the title in the filename.
+- **Source** (`internal/source`) — local path or YouTube URL. YouTube goes through `yt-dlp -x --audio-format mp3 --no-playlist`, preserving the title in the filename.
 - **Decode** (`internal/player`) — `gopxl/beep` decoders (mp3/wav/flac).
-- **8D effect** (`internal/effect/eightd.go`) — mono-sums then equal-power-pans across the stereo field driven by a sine LFO. Equal-power keeps perceived loudness flat as the sound moves.
-- **Reverb** (`internal/effect/reverb.go`) — tiny Schroeder reverb (4 combs → 2 allpasses) for room/depth. Mono wet, mixed equally into both channels, so the dry-panned source moves while the room stays still.
-- **Meter** (`internal/effect/meter.go`) — peak L/R levels with fast attack / slow release.
-- **Volume** — beep `effects.Volume` (log2 base) for the master fader.
-- **TUI** (`internal/ui`) — full-screen Bubble Tea + lipgloss. Orbital visualizer (sound orbiting your head as a 2D ellipse with a comet trail), VU meters, full-width progress bar with scrubber, status pane with all live values + keybindings. Coffee-toned palette.
+- **8D effect** (`internal/effect/eightd.go`) — mono-sums then equal-power-pans across the stereo field. LFO is either a sine (smooth, predictable) or a smoothed random walk (organic, unpredictable — the brain doesn't tune it out as fast).
+- **Reverb** — Schroeder (4 combs → 2 allpasses), mono wet mixed equally into both channels so the dry-panned source moves while the room stays still.
+- **Noise** (`noise.go`) — white / pink (Voss-McCartney) / brown (leaky integrator). Layered under the music via `beep.Mixer`.
+- **Binaural beats** (`binaural.go`) — two slightly-detuned sines (carrier 200 Hz), beat frequency tunable in the Focus Lab.
+- **Meter** (`meter.go`) — peak L/R levels with fast attack / slow release.
+- **TUI** (`internal/ui`) — Bubble Tea + lipgloss. Full-screen layout with the orbital visualizer (sound orbiting your head as a 2D ellipse with a comet trail), VU meters, full-width progress bar, status pane with all live values + chips. Coffee/Midnight/Forest/Cream themes. Mouse clicks supported.
+- **Focus Lab** — `f` opens the personalization panel: 4 presets (Calm/Focus/Stim/Random Walk) + sliders for rate, depth, reverb mix, noise volume, binaural beat. All persisted to `profile.json`.
+- **Capture-and-release** — `g` opens the distraction inbox to jot a thought without leaving the player.
+- **Pacing** — `s` for a sleep/focus timer (25 / 50 / 90 min); `p` for Pomodoro (25/5 with auto-pause/resume on break).
 - **Output** — `gopxl/beep/speaker` (CoreAudio on macOS via `oto`).
 
 ## Roadmap
 
-- Recents / queue persisted to `~/.cache/soma`
-- Streaming YouTube (skip the full download)
-- HRTF convolution (true binaural) as an opt-in mode
-- Crossfade between tracks
+- AirPods head-tracking via `CMHeadphoneMotionManager` (world-locked 8D)
+- Streaming YouTube (no full download)
+- Spectrum analyzer (FFT)
+- Album art via kitty/sixel
+- Crossfade between queued tracks

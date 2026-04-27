@@ -19,6 +19,22 @@ import (
 	"soma/internal/state"
 )
 
+// Config bundles the initial parameters for a session. Comes from the saved
+// profile on disk + any CLI overrides.
+type Config struct {
+	Rate         float64
+	Depth        float64
+	Shape        string // "sine" | "random"
+	Dry          bool
+	ReverbOn     bool
+	ReverbMix    float64
+	NoiseMode    string  // "off" | "white" | "pink" | "brown"
+	NoiseVolume  float64 // 0..1
+	BinauralOn   bool
+	BinauralBeat float64
+	VolumeDb     float64
+}
+
 // Session is a running playback. State is the shared snapshot the UI reads.
 // Done closes when the track finishes naturally. Close releases resources.
 type Session struct {
@@ -32,16 +48,23 @@ type Session struct {
 
 	stream     beep.StreamSeekCloser
 	sampleRate beep.SampleRate
-	ctrl       *beep.Ctrl
-	eightd     *effect.EightD
-	reverb     *effect.Reverb
-	volume     *effects.Volume
+
+	ctrl     *beep.Ctrl
+	eightd   *effect.EightD
+	reverb   *effect.Reverb
+	noise    *effect.Noise
+	binaural *effect.Binaural
+	volume   *effects.Volume
+
+	startedAt time.Time
 }
 
 // db ↔ log2 conversion (beep's effects.Volume is log-based, base 2).
 const db2Log = 1.0 / 6.020599913 // 1 / (20 * log10(2))
 
 func dbToLog(db float64) float64 { return db * db2Log }
+
+func (s *Session) StartedAt() time.Time { return s.startedAt }
 
 func (s *Session) Close() {
 	s.mu.Lock()
@@ -60,9 +83,9 @@ func (s *Session) Close() {
 	}
 }
 
-func (s *Session) OnClose(fn func()) {
-	s.onClose = append(s.onClose, fn)
-}
+func (s *Session) OnClose(fn func()) { s.onClose = append(s.onClose, fn) }
+
+// ── Pause / seek / volume ────────────────────────────────────────────────────
 
 func (s *Session) TogglePause() bool {
 	speaker.Lock()
@@ -72,30 +95,34 @@ func (s *Session) TogglePause() bool {
 	return s.ctrl.Paused
 }
 
-// AdjustVolume moves the master volume by deltaDb. Range is clamped to
-// [-60, +6] dB; below -50 dB, the stream is muted entirely.
-func (s *Session) AdjustVolume(deltaDb float64) {
+func (s *Session) SetPaused(p bool) {
 	speaker.Lock()
 	defer speaker.Unlock()
-
-	cur := s.volume.Volume / db2Log
-	cur += deltaDb
-	if cur < -60 {
-		cur = -60
-	}
-	if cur > 6 {
-		cur = 6
-	}
-	s.volume.Volume = dbToLog(cur)
-	s.volume.Silent = cur <= -50
-	s.State.SetVolumeDb(cur)
+	s.ctrl.Paused = p
+	s.State.SetPaused(p)
 }
 
-// SeekRelative moves the play position by d (positive = forward).
+func (s *Session) AdjustVolume(deltaDb float64) {
+	s.SetVolume(s.State.Snapshot().VolumeDb + deltaDb)
+}
+
+func (s *Session) SetVolume(db float64) {
+	speaker.Lock()
+	defer speaker.Unlock()
+	if db < -60 {
+		db = -60
+	}
+	if db > 6 {
+		db = 6
+	}
+	s.volume.Volume = dbToLog(db)
+	s.volume.Silent = db <= -50
+	s.State.SetVolumeDb(db)
+}
+
 func (s *Session) SeekRelative(d time.Duration) {
 	speaker.Lock()
 	defer speaker.Unlock()
-
 	pos := s.stream.Position() + s.sampleRate.N(d)
 	if pos < 0 {
 		pos = 0
@@ -107,13 +134,51 @@ func (s *Session) SeekRelative(d time.Duration) {
 	s.State.SetElapsed(s.sampleRate.D(pos))
 }
 
-// AdjustRate changes the 8D LFO frequency by deltaHz.
+func (s *Session) SeekFraction(f float64) {
+	if f < 0 {
+		f = 0
+	}
+	if f > 1 {
+		f = 1
+	}
+	speaker.Lock()
+	defer speaker.Unlock()
+	pos := int(float64(s.stream.Len()) * f)
+	if pos < 0 {
+		pos = 0
+	}
+	if pos >= s.stream.Len() {
+		pos = s.stream.Len() - 1
+	}
+	_ = s.stream.Seek(pos)
+	s.State.SetElapsed(s.sampleRate.D(pos))
+}
+
+// ── 8D controls ──────────────────────────────────────────────────────────────
+
 func (s *Session) AdjustRate(deltaHz float64) {
 	if s.eightd == nil {
 		return
 	}
-	cur := s.State.Snapshot().RateHz
-	s.eightd.SetRate(cur + deltaHz)
+	s.eightd.SetRate(s.State.Snapshot().RateHz + deltaHz)
+}
+
+func (s *Session) SetRate(hz float64) {
+	if s.eightd != nil {
+		s.eightd.SetRate(hz)
+	}
+}
+
+func (s *Session) SetDepth(d float64) {
+	if s.eightd != nil {
+		s.eightd.SetDepth(d)
+	}
+}
+
+func (s *Session) SetShape(name string) {
+	if s.eightd != nil {
+		s.eightd.SetShape(effect.ShapeFromString(name))
+	}
 }
 
 func (s *Session) ToggleEffect() {
@@ -124,6 +189,8 @@ func (s *Session) ToggleEffect() {
 	s.eightd.SetBypass(dry)
 }
 
+// ── Reverb ───────────────────────────────────────────────────────────────────
+
 func (s *Session) ToggleReverb() {
 	if s.reverb == nil {
 		return
@@ -133,8 +200,87 @@ func (s *Session) ToggleReverb() {
 	s.State.SetReverb(on)
 }
 
+func (s *Session) SetReverbMix(m float64) {
+	if s.reverb == nil {
+		return
+	}
+	s.reverb.SetMix(m)
+	s.State.SetReverbMix(m)
+}
+
+// ── Noise ────────────────────────────────────────────────────────────────────
+
+func (s *Session) CycleNoise() {
+	if s.noise == nil {
+		return
+	}
+	cur := effect.NoiseFromString(s.State.Snapshot().NoiseMode)
+	next := (cur + 1) % 4
+	s.noise.SetMode(next)
+	s.State.SetNoiseMode(next.String())
+}
+
+func (s *Session) SetNoiseMode(name string) {
+	if s.noise == nil {
+		return
+	}
+	m := effect.NoiseFromString(name)
+	s.noise.SetMode(m)
+	s.State.SetNoiseMode(m.String())
+}
+
+func (s *Session) AdjustNoiseVolume(delta float64) {
+	if s.noise == nil {
+		return
+	}
+	cur := s.State.Snapshot().NoiseVolume + delta
+	if cur < 0 {
+		cur = 0
+	}
+	if cur > 1 {
+		cur = 1
+	}
+	s.noise.SetVolume(cur)
+	s.State.SetNoiseVolume(cur)
+}
+
+func (s *Session) SetNoiseVolume(v float64) {
+	if s.noise == nil {
+		return
+	}
+	if v < 0 {
+		v = 0
+	}
+	if v > 1 {
+		v = 1
+	}
+	s.noise.SetVolume(v)
+	s.State.SetNoiseVolume(v)
+}
+
+// ── Binaural ─────────────────────────────────────────────────────────────────
+
+func (s *Session) ToggleBinaural() {
+	if s.binaural == nil {
+		return
+	}
+	on := !s.State.Snapshot().BinauralOn
+	s.binaural.SetEnabled(on)
+	s.State.SetBinauralOn(on)
+}
+
+func (s *Session) SetBinauralBeat(hz float64) {
+	if s.binaural == nil {
+		return
+	}
+	s.binaural.SetBeat(hz)
+	s.State.SetBinauralBeat(hz)
+}
+
+// ── Start ────────────────────────────────────────────────────────────────────
+
 // Start begins playback in the speaker goroutine and returns immediately.
-func Start(path string, rateHz float64, dry bool) (*Session, error) {
+func Start(path string, cfg Config) (*Session, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
@@ -153,34 +299,66 @@ func Start(path string, rateHz float64, dry bool) (*Session, error) {
 	}
 
 	mode := "8D"
-	if dry {
+	if cfg.Dry {
 		mode = "dry"
 	}
 	duration := format.SampleRate.D(stream.Len())
 	title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	st := state.New(title, mode, rateHz, duration)
-	st.SetReverb(true)
+	st := state.New(title, mode, cfg.Rate, duration)
+	st.SetDepth(cfg.Depth)
+	st.SetShape(cfg.Shape)
+	st.SetReverb(cfg.ReverbOn)
+	st.SetReverbMix(cfg.ReverbMix)
+	st.SetNoiseMode(cfg.NoiseMode)
+	st.SetNoiseVolume(cfg.NoiseVolume)
+	st.SetBinauralOn(cfg.BinauralOn)
+	st.SetBinauralBeat(cfg.BinauralBeat)
+	st.SetVolumeDb(cfg.VolumeDb)
 
-	var chain beep.Streamer = stream
-	eightD := effect.NewEightD(chain, float64(format.SampleRate), rateHz, st)
-	eightD.SetBypass(dry)
-	chain = eightD
+	// Music chain.
+	var music beep.Streamer = stream
+	eightD := effect.NewEightD(music, float64(format.SampleRate), cfg.Rate, cfg.Depth, effect.ShapeFromString(cfg.Shape), st)
+	eightD.SetBypass(cfg.Dry)
+	music = eightD
 
-	reverb := effect.NewReverb(chain, float64(format.SampleRate), 0.18)
-	chain = reverb
+	reverb := effect.NewReverb(music, float64(format.SampleRate), cfg.ReverbMix)
+	reverb.SetBypass(!cfg.ReverbOn)
+	music = reverb
 
-	chain = effect.NewMeter(chain, st)
+	// Noise + binaural as parallel sources.
+	noise := effect.NewNoise(effect.NoiseFromString(cfg.NoiseMode), cfg.NoiseVolume)
+	binaural := effect.NewBinaural(float64(format.SampleRate), cfg.BinauralBeat, 0.10)
+	binaural.SetEnabled(cfg.BinauralOn)
 
-	vol := &effects.Volume{Streamer: chain, Base: 2, Volume: 0}
-	chain = vol
-
-	ctrl := &beep.Ctrl{Streamer: chain}
-
+	doneOnce := sync.Once{}
 	done := make(chan struct{})
-	speaker.Play(beep.Seq(ctrl, beep.Callback(func() {
-		st.MarkFinished()
-		close(done)
-	})))
+	closeDone := func() {
+		doneOnce.Do(func() {
+			st.MarkFinished()
+			close(done)
+		})
+	}
+
+	// Music with end-of-track callback. When the decoder is exhausted, Seq
+	// fires the callback exactly once, and the Mixer auto-removes the
+	// finished streamer. Noise + binaural keep going until Session.Close.
+	musicWithEnd := beep.Seq(music, beep.Callback(closeDone))
+
+	mixer := &beep.Mixer{}
+	mixer.Add(musicWithEnd)
+	mixer.Add(noise)
+	mixer.Add(binaural)
+
+	metered := effect.NewMeter(mixer, st)
+
+	vol := &effects.Volume{Streamer: metered, Base: 2, Volume: dbToLog(cfg.VolumeDb)}
+	if cfg.VolumeDb <= -50 {
+		vol.Silent = true
+	}
+
+	ctrl := &beep.Ctrl{Streamer: vol}
+
+	speaker.Play(ctrl)
 
 	stopPoll := make(chan struct{})
 	go func() {
@@ -189,8 +367,6 @@ func Start(path string, rateHz float64, dry bool) (*Session, error) {
 		for {
 			select {
 			case <-stopPoll:
-				return
-			case <-done:
 				return
 			case <-ticker.C:
 				speaker.Lock()
@@ -208,6 +384,7 @@ func Start(path string, rateHz float64, dry bool) (*Session, error) {
 		}
 		closed = true
 		close(stopPoll)
+		closeDone()
 		speaker.Clear()
 		_ = stream.Close()
 		_ = f.Close()
@@ -223,7 +400,10 @@ func Start(path string, rateHz float64, dry bool) (*Session, error) {
 		ctrl:       ctrl,
 		eightd:     eightD,
 		reverb:     reverb,
+		noise:      noise,
+		binaural:   binaural,
 		volume:     vol,
+		startedAt:  time.Now(),
 	}, nil
 }
 
