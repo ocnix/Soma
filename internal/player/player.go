@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gopxl/beep/v2"
@@ -20,15 +21,44 @@ import (
 // Session is a running playback. State is the shared snapshot the UI reads.
 // Done closes when the track finishes naturally. Close releases resources.
 type Session struct {
-	State *state.State
-	Done  <-chan struct{}
-	close func()
+	State   *state.State
+	Done    <-chan struct{}
+	close   func()
+	ctrl    *beep.Ctrl
+	onClose []func()
+	mu      sync.Mutex
+	closed  bool
 }
 
 func (s *Session) Close() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
+	s.mu.Unlock()
+
 	if s.close != nil {
 		s.close()
 	}
+	for _, fn := range s.onClose {
+		fn()
+	}
+}
+
+// OnClose registers a callback fired when the session is closed.
+func (s *Session) OnClose(fn func()) {
+	s.onClose = append(s.onClose, fn)
+}
+
+// TogglePause flips the paused flag and returns the new state.
+func (s *Session) TogglePause() bool {
+	speaker.Lock()
+	defer speaker.Unlock()
+	s.ctrl.Paused = !s.ctrl.Paused
+	s.State.SetPaused(s.ctrl.Paused)
+	return s.ctrl.Paused
 }
 
 // Start begins playback in the speaker goroutine and returns immediately.
@@ -63,13 +93,14 @@ func Start(path string, rateHz float64, dry bool) (*Session, error) {
 	}
 	chain = effect.NewMeter(chain, st)
 
+	ctrl := &beep.Ctrl{Streamer: chain}
+
 	done := make(chan struct{})
-	speaker.Play(beep.Seq(chain, beep.Callback(func() {
+	speaker.Play(beep.Seq(ctrl, beep.Callback(func() {
 		st.MarkFinished()
 		close(done)
 	})))
 
-	// Track elapsed by polling decoder position.
 	stopPoll := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
@@ -90,14 +121,18 @@ func Start(path string, rateHz float64, dry bool) (*Session, error) {
 	}()
 
 	closeFn := func() {
-		close(stopPoll)
+		select {
+		case <-stopPoll:
+		default:
+			close(stopPoll)
+		}
 		speaker.Clear()
 		_ = stream.Close()
 		_ = f.Close()
 		speaker.Close()
 	}
 
-	return &Session{State: st, Done: done, close: closeFn}, nil
+	return &Session{State: st, Done: done, close: closeFn, ctrl: ctrl}, nil
 }
 
 func decode(f *os.File, ext string) (beep.StreamSeekCloser, beep.Format, error) {

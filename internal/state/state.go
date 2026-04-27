@@ -18,6 +18,7 @@ type State struct {
 	levelL   float64
 	levelR   float64
 	finished bool
+	paused   bool
 }
 
 type Snapshot struct {
@@ -30,6 +31,7 @@ type Snapshot struct {
 	LevelL   float64
 	LevelR   float64
 	Finished bool
+	Paused   bool
 }
 
 func New(title, mode string, rateHz float64, duration time.Duration) *State {
@@ -60,6 +62,12 @@ func (s *State) MarkFinished() {
 	s.mu.Unlock()
 }
 
+func (s *State) SetPaused(p bool) {
+	s.mu.Lock()
+	s.paused = p
+	s.mu.Unlock()
+}
+
 func (s *State) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -73,5 +81,6 @@ func (s *State) Snapshot() Snapshot {
 		LevelL:   s.levelL,
 		LevelR:   s.levelR,
 		Finished: s.finished,
+		Paused:   s.paused,
 	}
 }

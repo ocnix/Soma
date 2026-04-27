@@ -21,18 +21,30 @@ go build -o soma .
 ## Use
 
 ```sh
-# local file
-./soma ~/Music/track.mp3
+# interactive — paste a path or url into the home screen
+./soma
 
-# youtube
+# launch straight into a track
+./soma ~/Music/track.mp3
 ./soma "https://www.youtube.com/watch?v=..."
 
 # tweak the rotation speed (default 0.15 Hz ≈ 6.7s per full sweep)
-./soma -rate 0.25 track.mp3
+./soma -rate 0.25
 
 # disable the effect, play normally
-./soma -dry track.mp3
+./soma -dry
 ```
+
+### Keys
+
+| screen   | key       | action                |
+| -------- | --------- | --------------------- |
+| home     | `enter`   | play the input        |
+| home     | `q`       | quit                  |
+| loading  | `esc`     | cancel, back to home  |
+| playing  | `space`   | pause / resume        |
+| playing  | `esc`     | stop, back to home    |
+| any      | `ctrl+c`  | hard quit             |
 
 Supported formats: mp3, wav, flac.
 
