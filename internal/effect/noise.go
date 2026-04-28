@@ -18,6 +18,11 @@ const (
 	NoiseOcean
 	NoiseWind
 	NoiseFire
+	NoiseBowl  // singing bowl / Tibetan bell — meditative
+	NoiseStorm // rain + thunder rumbles
+	NoiseForest
+	NoiseCreek
+	NoiseNight // crickets + faint wind
 )
 
 func NoiseFromString(s string) NoiseMode {
@@ -36,6 +41,16 @@ func NoiseFromString(s string) NoiseMode {
 		return NoiseWind
 	case "fire":
 		return NoiseFire
+	case "bowl":
+		return NoiseBowl
+	case "storm":
+		return NoiseStorm
+	case "forest":
+		return NoiseForest
+	case "creek":
+		return NoiseCreek
+	case "night":
+		return NoiseNight
 	default:
 		return NoiseOff
 	}
@@ -57,12 +72,22 @@ func (m NoiseMode) String() string {
 		return "wind"
 	case NoiseFire:
 		return "fire"
+	case NoiseBowl:
+		return "bowl"
+	case NoiseStorm:
+		return "storm"
+	case NoiseForest:
+		return "forest"
+	case NoiseCreek:
+		return "creek"
+	case NoiseNight:
+		return "night"
 	default:
 		return "off"
 	}
 }
 
-const noiseModeCount = 8
+const noiseModeCount = 13
 
 // Noise is a beep.Streamer that synthesises noise / ambience.
 type Noise struct {
@@ -89,6 +114,43 @@ type Noise struct {
 	// Active rain droplets and fire crackles.
 	drops    []droplet
 	crackles []droplet
+
+	// Bowl (Tibetan singing bowl) state.
+	bowlSamples int
+	bowls       []bowlStrike
+
+	// Thunder for storm mode.
+	thunderSamples int
+	thunders       []thunderEvent
+
+	// Forest birds and night crickets.
+	birds         []birdChirp
+	cricketPhase  float64
+	cricketBuzzN  int
+
+	// Creek bubble LFO.
+	creekPhase float64
+}
+
+type bowlVoice struct {
+	freq, phase, amp float64
+}
+
+type bowlStrike struct {
+	envelope float64
+	decay    float64
+	voices   []bowlVoice
+}
+
+type thunderEvent struct {
+	envelope float64
+	decay    float64
+}
+
+type birdChirp struct {
+	freqStart, freqEnd float64
+	duration, age      int
+	phase, envelope    float64
 }
 
 type droplet struct {
@@ -184,6 +246,21 @@ func (n *Noise) Stream(samples [][2]float64) (int, bool) {
 
 		case NoiseFire:
 			v = n.fireTick(sr)
+
+		case NoiseBowl:
+			v = n.bowlTick(sr)
+
+		case NoiseStorm:
+			v = n.rainTick(sr)*0.7 + n.thunderTick(sr)
+
+		case NoiseForest:
+			v = n.forestTick(sr)
+
+		case NoiseCreek:
+			v = n.creekTick(sr)
+
+		case NoiseNight:
+			v = n.nightTick(sr)
 		}
 		v *= vol
 		samples[i][0] = v
@@ -309,6 +386,149 @@ func (n *Noise) fireTick(sr float64) float64 {
 		out = append(out, c)
 	}
 	n.crackles = out
+	return base + crk
+}
+
+// ── meditative + nature modes ────────────────────────────────────────────────
+
+// bowlTick: Tibetan singing bowl. A struck bowl has an inharmonic spectrum
+// (~1, 2.76, 5.40, 7.18 ratios are typical). Each strike rings for ~10 s,
+// new strikes spawn every 25-45 s. A faint brown-noise hum fills the silence.
+func (n *Noise) bowlTick(sr float64) float64 {
+	if n.bowlSamples <= 0 {
+		f := 220 + n.rng.Float64()*180 // 220-400 Hz fundamental
+		n.bowls = append(n.bowls, bowlStrike{
+			envelope: 1.0,
+			decay:    0.99996, // long, gentle decay
+			voices: []bowlVoice{
+				{freq: f, amp: 0.7},
+				{freq: f * 2.756, amp: 0.4},
+				{freq: f * 5.405, amp: 0.22},
+				{freq: f * 7.182, amp: 0.13},
+			},
+		})
+		n.bowlSamples = int(sr * (25 + n.rng.Float64()*20))
+	}
+	n.bowlSamples--
+
+	var sum float64
+	out := n.bowls[:0]
+	for _, b := range n.bowls {
+		b.envelope *= b.decay
+		if b.envelope < 0.0008 {
+			continue
+		}
+		var sample float64
+		for i := range b.voices {
+			inc := 2 * math.Pi * b.voices[i].freq / sr
+			b.voices[i].phase += inc
+			if b.voices[i].phase > 2*math.Pi {
+				b.voices[i].phase -= 2 * math.Pi
+			}
+			sample += math.Sin(b.voices[i].phase) * b.voices[i].amp
+		}
+		sum += sample * b.envelope * 0.45
+		out = append(out, b)
+	}
+	n.bowls = out
+
+	// Faint brown-noise bed so the silence doesn't feel dead.
+	return sum + n.brownTick()*0.35
+}
+
+func (n *Noise) thunderTick(sr float64) float64 {
+	// Schedule a thunder event every 15-60 seconds.
+	if n.thunderSamples <= 0 {
+		n.thunders = append(n.thunders, thunderEvent{
+			envelope: 1.0,
+			decay:    0.99988 + n.rng.Float64()*0.00006,
+		})
+		n.thunderSamples = int(sr * (15 + n.rng.Float64()*45))
+	}
+	n.thunderSamples--
+
+	var sum float64
+	out := n.thunders[:0]
+	for _, t := range n.thunders {
+		t.envelope *= t.decay
+		if t.envelope < 0.001 {
+			continue
+		}
+		// Brown noise is naturally low-frequency — perfect for rumble.
+		sum += n.brownTick() * 5.5 * t.envelope
+		out = append(out, t)
+	}
+	n.thunders = out
+	return sum * 0.55
+}
+
+func (n *Noise) forestTick(sr float64) float64 {
+	// Wind through trees: gentle brown.
+	base := n.brownTick() * 1.6
+
+	// Bird chirps occasionally (~1/sec on average).
+	if n.rng.Float64() < 1.2/sr {
+		n.birds = append(n.birds, birdChirp{
+			freqStart: 2000 + n.rng.Float64()*4000,
+			freqEnd:   1500 + n.rng.Float64()*3500,
+			duration:  int(sr * (0.05 + n.rng.Float64()*0.15)),
+			envelope:  0.45 + n.rng.Float64()*0.25,
+		})
+		if len(n.birds) > 8 {
+			n.birds = n.birds[1:]
+		}
+	}
+
+	var sum float64
+	out := n.birds[:0]
+	for _, b := range n.birds {
+		b.age++
+		if b.age >= b.duration {
+			continue
+		}
+		t := float64(b.age) / float64(b.duration)
+		f := b.freqStart + (b.freqEnd-b.freqStart)*t
+		b.phase += 2 * math.Pi * f / sr
+		if b.phase > 2*math.Pi {
+			b.phase -= 2 * math.Pi
+		}
+		// Triangle envelope (attack-release).
+		env := 1 - math.Abs(2*t-1)
+		sum += math.Sin(b.phase) * env * b.envelope
+		out = append(out, b)
+	}
+	n.birds = out
+	return base + sum*0.32
+}
+
+func (n *Noise) creekTick(sr float64) float64 {
+	// Pink noise modulated by a few overlapping LFOs to give a "bubbly" feel.
+	n.creekPhase += 2 * math.Pi * 4.0 / sr
+	if n.creekPhase > 2*math.Pi {
+		n.creekPhase -= 2 * math.Pi
+	}
+	bubble := 0.6 + 0.4*math.Sin(n.creekPhase) + 0.15*math.Sin(n.creekPhase*2.7)
+	if bubble < 0.2 {
+		bubble = 0.2
+	}
+	return n.pinkTick() * bubble * 1.0
+}
+
+func (n *Noise) nightTick(sr float64) float64 {
+	// Gentle wind bed.
+	base := n.brownTick() * 0.65
+
+	// Crickets — periodic chirps every ~0.7s.
+	n.cricketPhase += 2 * math.Pi * 1.4 / sr
+	if n.cricketPhase > 2*math.Pi {
+		n.cricketPhase -= 2 * math.Pi
+		n.cricketBuzzN = int(sr * 0.06) // 60ms chirp
+	}
+	var crk float64
+	if n.cricketBuzzN > 0 {
+		crk = (n.rng.Float64()*2 - 1) * 0.35
+		n.cricketBuzzN--
+	}
 	return base + crk
 }
 

@@ -85,8 +85,8 @@ func (m *model) renderFocusLab() string {
 	subhead := subStyle.Render("personalize the 8D feel for your brain")
 
 	// Presets row.
-	presets := []string{"calm", "focus", "stim", "random walk"}
-	keys := []string{"1", "2", "3", "4"}
+	presets := []string{"calm", "focus", "stim", "random walk", "zen"}
+	keys := []string{"1", "2", "3", "4", "5"}
 	var pBuf strings.Builder
 	pBuf.WriteString(labelStyle.Render("presets") + "\n  ")
 	for i, p := range presets {
@@ -126,7 +126,7 @@ func (m *model) renderFocusLab() string {
 	help := helpStyle.Render(
 		keyStyle.Render("↑/↓") + " param   " +
 			keyStyle.Render("←/→ or +/-") + " adjust   " +
-			keyStyle.Render("1-4") + " preset   " +
+			keyStyle.Render("1-5") + " preset   " +
 			keyStyle.Render("f or esc") + " close",
 	)
 

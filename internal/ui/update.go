@@ -469,6 +469,8 @@ func (m *model) handleFocusLab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.applyPreset("stim")
 	case "4":
 		m.applyPreset("random")
+	case "5":
+		m.applyPreset("zen")
 	}
 	return m, nil
 }
@@ -516,16 +518,37 @@ func (m *model) applyPreset(name string) {
 		m.profile.Shape = "random"
 		m.profile.ReverbOn = true
 		m.profile.ReverbMix = 0.22
+	case "zen":
+		// Slow drift, deep room, theta-band binaural, singing-bowl bed,
+		// breathing visualizer.
+		m.profile.Rate = 0.05
+		m.profile.Depth = 0.55
+		m.profile.Shape = "random"
+		m.profile.ReverbOn = true
+		m.profile.ReverbMix = 0.45
+		m.profile.NoiseMode = "bowl"
+		m.profile.NoiseVolume = 0.32
+		m.profile.BinauralOn = true
+		m.profile.BinauralBeat = 6
+		m.profile.Viz = "zen"
+		m.vizMode = VizZen
 	}
 	if m.sess != nil {
 		m.sess.SetRate(m.profile.Rate)
 		m.sess.SetDepth(m.profile.Depth)
 		m.sess.SetShape(m.profile.Shape)
 		m.sess.SetReverbMix(m.profile.ReverbMix)
-		// reverb on/off via toggle if mismatched
 		curOn := m.sess.State.Snapshot().ReverbOn
 		if curOn != m.profile.ReverbOn {
 			m.sess.ToggleReverb()
+		}
+		if name == "zen" {
+			m.sess.SetNoiseMode("bowl")
+			m.sess.SetNoiseVolume(m.profile.NoiseVolume)
+			if !m.sess.State.Snapshot().BinauralOn {
+				m.sess.ToggleBinaural()
+			}
+			m.sess.SetBinauralBeat(m.profile.BinauralBeat)
 		}
 	}
 	m.saveProfile()

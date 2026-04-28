@@ -17,9 +17,10 @@ const (
 	VizLissajous
 	VizTunnel
 	VizSpectrum
+	VizZen
 )
 
-var vizCycle = []VizMode{VizSphere, VizSpectrum, VizLissajous, VizTunnel, VizOrbit}
+var vizCycle = []VizMode{VizSphere, VizSpectrum, VizZen, VizLissajous, VizTunnel, VizOrbit}
 
 func (v VizMode) Name() string {
 	switch v {
@@ -31,6 +32,8 @@ func (v VizMode) Name() string {
 		return "tunnel"
 	case VizSpectrum:
 		return "spectrum"
+	case VizZen:
+		return "zen"
 	default:
 		return "orbit"
 	}
@@ -55,6 +58,8 @@ func vizFromString(s string) VizMode {
 		return VizTunnel
 	case "spectrum":
 		return VizSpectrum
+	case "zen":
+		return VizZen
 	case "orbit":
 		return VizOrbit
 	}
@@ -72,6 +77,8 @@ func renderViz(mode VizMode, phase, levelL, levelR float64, bands []float64, w, 
 		return tunnelView(phase, levelL, levelR, w, h, paused)
 	case VizSpectrum:
 		return spectrumView(phase, bands, levelL, levelR, w, h, paused)
+	case VizZen:
+		return zenView(phase, levelL, levelR, w, h, paused)
 	default:
 		return orbitalView(phase, w, h, paused)
 	}
@@ -503,6 +510,125 @@ func spectrumView(phase float64, bands []float64, lvlL, lvlR float64, w, h int, 
 		bigPause(c, int(cx), int(cy))
 	}
 	return c.render()
+}
+
+// ── Zen (breathing enso) ─────────────────────────────────────────────────────
+
+// zenView is a slow, calming visualizer modelled on box-breathing (4-4-4-4).
+// A single enso circle softly expands on inhale, holds, contracts on exhale,
+// and holds again. The screen prompts what to do this beat. Stars are sparse;
+// movement is slow. No comet, no spinning sphere. Just the breath.
+func zenView(phase, lvlL, lvlR float64, w, h int, paused bool) string {
+	c := newCanvas(w, h)
+	const aspectY = 0.5
+
+	cx := float64(w-1) / 2
+	cy := float64(h-1) / 2
+
+	innerR := math.Min(float64(w)/8, float64(h)/(4*aspectY))
+	if innerR < 2 {
+		innerR = 2
+	}
+	maxR := math.Min(float64(w)/2, float64(h)/(2*aspectY)) * 0.85
+
+	// Very sparse, very slow stars.
+	drawStars(c, phase*0.2)
+
+	// Box-breathing: 4 phases of equal length. Total cycle ~16s.
+	// We map the playback phase (which advances at the LFO rate) to a
+	// fixed-rate breath cycle so the animation isn't tied to LFO speed.
+	// 30Hz tick * 16s = 480 steps per cycle; 2π/480 step.
+	// Use a separate slow cycle derived from phase magnitude.
+	cycleSec := 16.0
+	tNorm := math.Mod(phase/(2*math.Pi)*cycleSec, cycleSec) / cycleSec
+	if tNorm < 0 {
+		tNorm += 1
+	}
+	// 4 phases at 0.25 each.
+	var label string
+	var size float64 // 0..1, current radius fraction
+	switch {
+	case tNorm < 0.25:
+		// inhale — expand
+		t := tNorm / 0.25
+		size = easeInOut(t)
+		label = "inhale"
+	case tNorm < 0.50:
+		// hold — full
+		size = 1
+		label = "hold"
+	case tNorm < 0.75:
+		// exhale — contract
+		t := (tNorm - 0.50) / 0.25
+		size = 1 - easeInOut(t)
+		label = "exhale"
+	default:
+		// hold — empty
+		size = 0
+		label = "hold"
+	}
+
+	curR := innerR + (maxR-innerR)*size
+
+	// Draw the enso ring — slightly imperfect, with a subtle "ink break"
+	// on one side (a real enso is drawn in one breath stroke).
+	const breakStart = 5.4 // radians (lower-right gap)
+	const breakEnd = 5.9
+	for t := 0.0; t < 2*math.Pi; t += 0.025 {
+		if t > breakStart && t < breakEnd {
+			continue
+		}
+		x := int(math.Round(cx + curR*math.Sin(t)))
+		y := int(math.Round(cy - curR*math.Cos(t)*aspectY))
+		// Inkier on the "drawing direction" side; faint elsewhere.
+		ch := '·'
+		style := 2
+		if t < math.Pi {
+			ch = '○'
+			style = 5
+		}
+		// Re-mark with brighter glyph at a few "ink puddles."
+		if math.Abs(math.Mod(t-0.4, 1.6)) < 0.12 {
+			ch = '●'
+			style = 5
+		}
+		c.put(x, y, ch, style)
+	}
+
+	// Center dot — your breath.
+	headChar := '·'
+	if size > 0.6 {
+		headChar = '◌'
+	}
+	if size > 0.9 {
+		headChar = '◍'
+	}
+	c.put(int(cx), int(cy), headChar, 4)
+
+	// Labels above and below.
+	titleStr := "breathe"
+	subStr := label
+	if paused {
+		subStr = "paused — esc to exit"
+	}
+	titleX := int(cx) - len([]rune(titleStr))/2
+	subX := int(cx) - len([]rune(subStr))/2
+	for i, r := range titleStr {
+		c.put(titleX+i, 1, r, 3)
+	}
+	for i, r := range subStr {
+		c.put(subX+i, h-2, r, 4)
+	}
+
+	if paused {
+		bigPause(c, int(cx), int(cy))
+	}
+	return c.render()
+}
+
+// easeInOut maps 0..1 → 0..1 with a smooth S-curve (cosine ease).
+func easeInOut(t float64) float64 {
+	return 0.5 - 0.5*math.Cos(t*math.Pi)
 }
 
 // ── Tunnel ───────────────────────────────────────────────────────────────────

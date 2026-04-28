@@ -48,6 +48,7 @@ type Session struct {
 
 	stream     beep.StreamSeekCloser
 	sampleRate beep.SampleRate
+	live       bool
 
 	ctrl     *beep.Ctrl
 	eightd   *effect.EightD
@@ -58,6 +59,10 @@ type Session struct {
 
 	startedAt time.Time
 }
+
+// IsLive reports whether the session is a live (un-seekable, no-duration)
+// stream rather than a finite track.
+func (s *Session) IsLive() bool { return s.live }
 
 // db ↔ log2 conversion (beep's effects.Volume is log-based, base 2).
 const db2Log = 1.0 / 6.020599913 // 1 / (20 * log10(2))
@@ -121,6 +126,9 @@ func (s *Session) SetVolume(db float64) {
 }
 
 func (s *Session) SeekRelative(d time.Duration) {
+	if s.live {
+		return
+	}
 	speaker.Lock()
 	defer speaker.Unlock()
 	pos := s.stream.Position() + s.sampleRate.N(d)
@@ -135,6 +143,9 @@ func (s *Session) SeekRelative(d time.Duration) {
 }
 
 func (s *Session) SeekFraction(f float64) {
+	if s.live {
+		return
+	}
 	if f < 0 {
 		f = 0
 	}
@@ -215,7 +226,7 @@ func (s *Session) CycleNoise() {
 		return
 	}
 	cur := effect.NoiseFromString(s.State.Snapshot().NoiseMode)
-	next := effect.NoiseMode((int(cur) + 1) % 8)
+	next := effect.NoiseMode((int(cur) + 1) % 13)
 	s.noise.SetMode(next)
 	s.State.SetNoiseMode(next.String())
 }
