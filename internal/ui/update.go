@@ -26,6 +26,8 @@ func (m *model) updateHome(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "t":
 		m.cycleTheme()
 		return m, nil
+	case "l":
+		return m.openLibrary()
 	case "?":
 		// Random play from recents.
 		if it, ok := config.RandomRecent(); ok {

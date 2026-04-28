@@ -39,6 +39,7 @@ func (m *model) viewHome() string {
 		keyStyle.Render("enter") + " play   " +
 			keyStyle.Render("↑/↓") + " navigate   " +
 			keyStyle.Render("?") + " random   " +
+			keyStyle.Render("l") + " library   " +
 			keyStyle.Render("t") + " theme   " +
 			keyStyle.Render("esc") + " quit",
 	)

@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"soma/internal/config"
+	"soma/internal/library"
 	"soma/internal/player"
 	"soma/internal/source"
 )
@@ -39,6 +40,9 @@ func Run(initialPath string, profile config.Profile) error {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(colGold)
 
+	lib := library.NewIndex()
+	lib.LoadCache()
+
 	m := &model{
 		screen:        screenHome,
 		input:         ti,
@@ -50,6 +54,8 @@ func Run(initialPath string, profile config.Profile) error {
 		todayTotal:    config.TodayTotal(),
 		streak:        config.Streak(),
 		vizMode:       vizFromString(profile.Viz),
+		lib:           lib,
+		libQueryFocus: true,
 	}
 
 	prog := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
@@ -73,6 +79,7 @@ const (
 	screenHome screen = iota
 	screenLoading
 	screenPlaying
+	screenLibrary
 )
 
 type tickMsg time.Time
@@ -80,6 +87,7 @@ type startedMsg struct{ sess *player.Session }
 type errMsg struct{ err error }
 type finishedMsg struct{}
 type sleepFiredMsg struct{}
+type libraryScannedMsg struct{ count int }
 
 // ── Model ────────────────────────────────────────────────────────────────────
 
@@ -118,6 +126,13 @@ type model struct {
 	sleepEnd         *time.Time
 	vizMode          VizMode
 
+	// library
+	lib            *library.Index
+	libQuery       string
+	libCursor      int
+	libScanning    bool
+	libQueryFocus  bool
+
 	// mouse hit regions on the playing screen
 	regions clickRegions
 
@@ -154,6 +169,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case screenPlaying:
 			return m.updatePlaying(msg)
+		case screenLibrary:
+			return m.updateLibrary(msg)
 		}
 
 	case tea.MouseMsg:
@@ -178,6 +195,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sleepFiredMsg:
 		// fade-and-stop is just a hard stop in v1; sleep timer ends the session.
 		m.endSession()
+		return m, nil
+
+	case libraryScannedMsg:
+		m.libScanning = false
+		m.libCursor = 0
 		return m, nil
 
 	case tickMsg:
@@ -222,6 +244,8 @@ func (m *model) View() string {
 		return m.viewLoading()
 	case screenPlaying:
 		return m.viewPlaying()
+	case screenLibrary:
+		return m.viewLibrary()
 	}
 	return ""
 }
