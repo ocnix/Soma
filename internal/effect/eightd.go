@@ -161,6 +161,11 @@ func (e *EightD) Stream(samples [][2]float64) (int, bool) {
 
 	inc := 2 * math.Pi * rate / e.sampleRate
 
+	// Publish phase to State periodically inside the buffer so the UI's
+	// 30 Hz redraw doesn't see a stale value during a long buffer call.
+	// 512 samples ≈ 11 ms at 44.1 kHz — well below one UI frame.
+	const phasePublishEvery = 512
+
 	for i := 0; i < n; i++ {
 		var pan float64
 		switch shape {
@@ -168,7 +173,6 @@ func (e *EightD) Stream(samples [][2]float64) (int, bool) {
 			e.stepCtr++
 			if e.stepCtr >= targetEverySamples {
 				e.stepCtr = 0
-				// Pick a new target uniformly in [-1, 1].
 				e.target = e.rngSrc.Float64()*2 - 1
 			}
 			diff := e.target - e.walk
@@ -189,12 +193,16 @@ func (e *EightD) Stream(samples [][2]float64) (int, bool) {
 
 		pan *= depth
 
-		// Mono-sum the source so the energy follows the pan.
 		mono := (samples[i][0] + samples[i][1]) * 0.5
 
 		theta := (pan + 1) * math.Pi / 4
 		samples[i][0] = mono * math.Cos(theta) * math.Sqrt2
 		samples[i][1] = mono * math.Sin(theta) * math.Sqrt2
+
+		if e.st != nil && i%phasePublishEvery == 0 {
+			e.st.SetPan(pan)
+			e.st.SetPhase(e.phase)
+		}
 	}
 
 	if e.st != nil {

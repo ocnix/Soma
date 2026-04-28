@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -18,9 +19,11 @@ const (
 	VizTunnel
 	VizSpectrum
 	VizZen
+	VizFractal
+	VizLife
 )
 
-var vizCycle = []VizMode{VizSphere, VizSpectrum, VizZen, VizLissajous, VizTunnel, VizOrbit}
+var vizCycle = []VizMode{VizSphere, VizSpectrum, VizFractal, VizLife, VizZen, VizLissajous, VizTunnel, VizOrbit}
 
 func (v VizMode) Name() string {
 	switch v {
@@ -34,6 +37,10 @@ func (v VizMode) Name() string {
 		return "spectrum"
 	case VizZen:
 		return "zen"
+	case VizFractal:
+		return "fractal"
+	case VizLife:
+		return "life"
 	default:
 		return "orbit"
 	}
@@ -60,6 +67,10 @@ func vizFromString(s string) VizMode {
 		return VizSpectrum
 	case "zen":
 		return VizZen
+	case "fractal":
+		return VizFractal
+	case "life":
+		return VizLife
 	case "orbit":
 		return VizOrbit
 	}
@@ -79,6 +90,10 @@ func renderViz(mode VizMode, phase, levelL, levelR float64, bands []float64, w, 
 		return spectrumView(phase, bands, levelL, levelR, w, h, paused)
 	case VizZen:
 		return zenView(phase, levelL, levelR, w, h, paused)
+	case VizFractal:
+		return fractalView(phase, bands, levelL, levelR, w, h, paused)
+	case VizLife:
+		return lifeView(phase, bands, levelL, levelR, w, h, paused)
 	default:
 		return orbitalView(phase, w, h, paused)
 	}
@@ -534,16 +549,12 @@ func zenView(phase, lvlL, lvlR float64, w, h int, paused bool) string {
 	// Very sparse, very slow stars.
 	drawStars(c, phase*0.2)
 
-	// Box-breathing: 4 phases of equal length. Total cycle ~16s.
-	// We map the playback phase (which advances at the LFO rate) to a
-	// fixed-rate breath cycle so the animation isn't tied to LFO speed.
-	// 30Hz tick * 16s = 480 steps per cycle; 2π/480 step.
-	// Use a separate slow cycle derived from phase magnitude.
+	// Box-breathing: 4 phases of equal length. Total cycle 16s. Driven
+	// from wall-clock time so the animation is smooth at the UI's 30 Hz
+	// tick rate instead of stuttering at the audio buffer rate (~10 Hz).
 	cycleSec := 16.0
-	tNorm := math.Mod(phase/(2*math.Pi)*cycleSec, cycleSec) / cycleSec
-	if tNorm < 0 {
-		tNorm += 1
-	}
+	secs := float64(time.Now().UnixNano()) / 1e9
+	tNorm := math.Mod(secs, cycleSec) / cycleSec
 	// 4 phases at 0.25 each.
 	var label string
 	var size float64 // 0..1, current radius fraction
