@@ -133,6 +133,9 @@ type model struct {
 	libScanning    bool
 	libQueryFocus  bool
 
+	// repeat
+	repeat bool
+
 	// mouse hit regions on the playing screen
 	regions clickRegions
 
@@ -189,6 +192,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case finishedMsg:
+		// Auto-repeat: tear down the current session and start a new one
+		// with the same source. The brief gap during teardown/init is
+		// noticeable but not jarring; seamless looping requires a deeper
+		// refactor of the audio chain.
+		if m.repeat && m.sess != nil && m.loadingArg != "" {
+			arg := m.loadingArg
+			_ = config.AppendSession(m.sess.StartedAt(), time.Now())
+			m.sess.Close()
+			m.sess = nil
+			m.screen = screenLoading
+			return m, tea.Batch(m.startLoadCmd(arg), m.spinner.Tick)
+		}
 		m.endSession()
 		return m, nil
 

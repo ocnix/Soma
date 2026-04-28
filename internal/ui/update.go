@@ -195,6 +195,8 @@ func (m *model) updatePlaying(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.vizMode = nextViz(m.vizMode)
 		m.profile.Viz = m.vizMode.Name()
 		m.saveProfile()
+	case "R":
+		m.repeat = !m.repeat
 	case "t":
 		m.cycleTheme()
 	case "S":

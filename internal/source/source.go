@@ -1,18 +1,24 @@
 package source
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"soma/internal/config"
 )
 
 // Resolve takes a CLI arg (a local file path or a YouTube URL) and returns a
-// playable local file path. cleanup removes any temp files created.
+// playable local file path. For YouTube URLs, the result is cached at
+// ~/.config/soma/yt-cache/<videoID>.mp3 so subsequent plays of the same
+// video are instant. cleanup is a no-op for cached/local files.
 func Resolve(arg string) (path string, cleanup func(), err error) {
 	if isYouTubeURL(arg) {
-		return downloadYouTube(arg)
+		return resolveYouTube(arg)
 	}
 
 	abs, err := filepath.Abs(arg)
@@ -28,41 +34,141 @@ func Resolve(arg string) (path string, cleanup func(), err error) {
 func noop() {}
 
 func isYouTubeURL(s string) bool {
-	s = strings.ToLower(s)
-	return strings.Contains(s, "youtube.com/") || strings.Contains(s, "youtu.be/")
+	low := strings.ToLower(s)
+	return strings.Contains(low, "youtube.com/") || strings.Contains(low, "youtu.be/")
 }
 
-func downloadYouTube(url string) (string, func(), error) {
+// videoID parses a YouTube URL and returns the canonical video ID, or "" if
+// none could be extracted (in which case we fall back to a non-cached temp
+// download).
+func videoID(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(u.Host)
+	switch {
+	case strings.Contains(host, "youtu.be"):
+		return strings.Trim(u.Path, "/")
+	case strings.Contains(host, "youtube.com"):
+		if v := u.Query().Get("v"); v != "" {
+			return v
+		}
+		// Shorts: /shorts/<id>
+		if strings.HasPrefix(u.Path, "/shorts/") {
+			return strings.TrimPrefix(u.Path, "/shorts/")
+		}
+	}
+	return ""
+}
+
+func cacheDir() string {
+	return filepath.Join(config.Dir(), "yt-cache")
+}
+
+type cachedMeta struct {
+	Title string `json:"title"`
+	URL   string `json:"url"`
+	ID    string `json:"id"`
+}
+
+// CachedTitle returns the saved title for a cached video, or empty if not
+// cached. Useful for recents UI.
+func CachedTitle(videoID string) string {
+	if videoID == "" {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(cacheDir(), videoID+".json"))
+	if err != nil {
+		return ""
+	}
+	var m cachedMeta
+	if json.Unmarshal(b, &m) == nil {
+		return m.Title
+	}
+	return ""
+}
+
+func resolveYouTube(rawURL string) (string, func(), error) {
+	id := videoID(rawURL)
+	if id != "" {
+		cached := filepath.Join(cacheDir(), id+".mp3")
+		if _, err := os.Stat(cached); err == nil {
+			fmt.Fprintf(os.Stderr, "▸ using cached %s\n", id)
+			return cached, noop, nil
+		}
+	}
+	return downloadYouTube(rawURL, id)
+}
+
+func downloadYouTube(rawURL, id string) (string, func(), error) {
 	if _, err := exec.LookPath("yt-dlp"); err != nil {
 		return "", noop, fmt.Errorf("yt-dlp not found on PATH — install with `brew install yt-dlp`")
 	}
 
-	dir, err := os.MkdirTemp("", "soma-*")
-	if err != nil {
-		return "", noop, fmt.Errorf("temp dir: %w", err)
+	if err := os.MkdirAll(cacheDir(), 0o755); err != nil {
+		return "", noop, fmt.Errorf("cache dir: %w", err)
 	}
-	cleanup := func() { _ = os.RemoveAll(dir) }
 
-	out := filepath.Join(dir, "%(title)s.%(ext)s")
-	cmd := exec.Command("yt-dlp",
+	var outFile, finalPath string
+	if id != "" {
+		// Deterministic cached path.
+		finalPath = filepath.Join(cacheDir(), id+".mp3")
+		outFile = finalPath
+	} else {
+		// Couldn't extract ID — fall back to temp dir, no caching.
+		tmp, err := os.MkdirTemp("", "soma-yt-*")
+		if err != nil {
+			return "", noop, err
+		}
+		outFile = filepath.Join(tmp, "track.%(ext)s")
+		finalPath = "" // discovered after download
+	}
+
+	args := []string{
 		"-x", "--audio-format", "mp3",
 		"--no-progress",
 		"--no-playlist",
-		"-o", out,
-		url,
-	)
-	cmd.Stdout = os.Stderr
+		"-o", outFile,
+	}
+	// We also want the title, so request a print line we can capture.
+	args = append(args, "--print", "after_move:%(title)s")
+	args = append(args, rawURL)
+
+	cmd := exec.Command("yt-dlp", args...)
+	var stdout strings.Builder
+	cmd.Stdout = &stdout
 	cmd.Stderr = os.Stderr
 	fmt.Fprintln(os.Stderr, "fetching audio from youtube...")
 	if err := cmd.Run(); err != nil {
-		cleanup()
 		return "", noop, fmt.Errorf("yt-dlp failed: %w", err)
 	}
 
-	matches, _ := filepath.Glob(filepath.Join(dir, "*.mp3"))
+	title := strings.TrimSpace(stdout.String())
+	if i := strings.Index(title, "\n"); i >= 0 {
+		title = strings.TrimSpace(title[:i])
+	}
+
+	if id != "" {
+		// The output was written to finalPath directly.
+		if _, err := os.Stat(finalPath); err != nil {
+			return "", noop, fmt.Errorf("expected cached file not found: %s", finalPath)
+		}
+		// Save metadata sidecar for nicer recents.
+		meta := cachedMeta{Title: title, URL: rawURL, ID: id}
+		if b, err := json.MarshalIndent(meta, "", "  "); err == nil {
+			_ = os.WriteFile(filepath.Join(cacheDir(), id+".json"), b, 0o644)
+		}
+		return finalPath, noop, nil
+	}
+
+	// No ID branch: glob the temp dir.
+	tmpDir := filepath.Dir(outFile)
+	matches, _ := filepath.Glob(filepath.Join(tmpDir, "*.mp3"))
 	if len(matches) == 0 {
-		cleanup()
+		_ = os.RemoveAll(tmpDir)
 		return "", noop, fmt.Errorf("yt-dlp produced no output")
 	}
+	cleanup := func() { _ = os.RemoveAll(tmpDir) }
 	return matches[0], cleanup, nil
 }

@@ -328,7 +328,12 @@ func (m *model) renderStatusPane(s state.Snapshot, width int) string {
 		labelStyle.Render("shape"), statStyle.Render(s.Shape),
 	)
 
-	chips := pauseChip + "  " + modeChip + " " + reverbChip + " " + noiseChip + " " + binChip
+	repeatChip := chipText(" ↻ repeat off ", false)
+	if m.repeat {
+		repeatChip = chipText(" ↻ repeat on ", true)
+	}
+
+	chips := pauseChip + "  " + modeChip + " " + reverbChip + " " + noiseChip + " " + binChip + " " + repeatChip
 
 	timersLine := m.renderTimerLine()
 
@@ -345,6 +350,7 @@ func (m *model) renderStatusPane(s state.Snapshot, width int) string {
 		keyStyle.Render("n") + " noise   " +
 			keyStyle.Render("N") + " noise+vol   " +
 			keyStyle.Render("b") + " binaural   " +
+			keyStyle.Render("R") + " repeat   " +
 			keyStyle.Render("f") + " focus lab   " +
 			keyStyle.Render("g") + " inbox   " +
 			keyStyle.Render("s") + " sleep   " +
