@@ -69,6 +69,24 @@ const db2Log = 1.0 / 6.020599913 // 1 / (20 * log10(2))
 
 func dbToLog(db float64) float64 { return db * db2Log }
 
+// SpeakerSampleRate is the fixed rate the speaker is initialized at. All
+// tracks are resampled to this rate so we only call speaker.Init once for
+// the whole process — beep doesn't allow re-init (the underlying oto/v3
+// context can't be re-created) and silently fails the second `player.Start`.
+const SpeakerSampleRate beep.SampleRate = 44100
+
+var (
+	speakerOnce    sync.Once
+	speakerInitErr error
+)
+
+func ensureSpeaker() error {
+	speakerOnce.Do(func() {
+		speakerInitErr = speaker.Init(SpeakerSampleRate, SpeakerSampleRate.N(time.Second/10))
+	})
+	return speakerInitErr
+}
+
 func (s *Session) StartedAt() time.Time { return s.startedAt }
 
 func (s *Session) Close() {
@@ -303,7 +321,7 @@ func Start(path string, cfg Config) (*Session, error) {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
 
-	if err := speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10)); err != nil {
+	if err := ensureSpeaker(); err != nil {
 		stream.Close()
 		f.Close()
 		return nil, fmt.Errorf("speaker init: %w", err)
@@ -326,20 +344,25 @@ func Start(path string, cfg Config) (*Session, error) {
 	st.SetBinauralBeat(cfg.BinauralBeat)
 	st.SetVolumeDb(cfg.VolumeDb)
 
-	// Music chain.
+	// Resample to the speaker's fixed rate if the track's native rate differs.
 	var music beep.Streamer = stream
-	eightD := effect.NewEightD(music, float64(format.SampleRate), cfg.Rate, cfg.Depth, effect.ShapeFromString(cfg.Shape), st)
+	if format.SampleRate != SpeakerSampleRate {
+		music = beep.Resample(4, format.SampleRate, SpeakerSampleRate, music)
+	}
+
+	// All downstream effects operate at the speaker's rate.
+	chainSR := float64(SpeakerSampleRate)
+	eightD := effect.NewEightD(music, chainSR, cfg.Rate, cfg.Depth, effect.ShapeFromString(cfg.Shape), st)
 	eightD.SetBypass(cfg.Dry)
 	music = eightD
 
-	reverb := effect.NewReverb(music, float64(format.SampleRate), cfg.ReverbMix)
+	reverb := effect.NewReverb(music, chainSR, cfg.ReverbMix)
 	reverb.SetBypass(!cfg.ReverbOn)
 	music = reverb
 
-	// Noise + binaural as parallel sources.
 	noise := effect.NewNoise(effect.NoiseFromString(cfg.NoiseMode), cfg.NoiseVolume)
-	noise.SetSampleRate(float64(format.SampleRate))
-	binaural := effect.NewBinaural(float64(format.SampleRate), cfg.BinauralBeat, 0.10)
+	noise.SetSampleRate(chainSR)
+	binaural := effect.NewBinaural(chainSR, cfg.BinauralBeat, 0.10)
 	binaural.SetEnabled(cfg.BinauralOn)
 
 	doneOnce := sync.Once{}
@@ -361,7 +384,7 @@ func Start(path string, cfg Config) (*Session, error) {
 	mixer.Add(noise)
 	mixer.Add(binaural)
 
-	spectrum := effect.NewSpectrum(mixer, float64(format.SampleRate), 1024, 32, st)
+	spectrum := effect.NewSpectrum(mixer, chainSR, 1024, 32, st)
 	metered := effect.NewMeter(spectrum, st)
 
 	vol := &effects.Volume{Streamer: metered, Base: 2, Volume: dbToLog(cfg.VolumeDb)}
@@ -398,10 +421,12 @@ func Start(path string, cfg Config) (*Session, error) {
 		closed = true
 		close(stopPoll)
 		closeDone()
+		// speaker.Clear removes our streamers from the package-level mixer.
+		// We deliberately do NOT call speaker.Close — beep can't re-init,
+		// and the docs explicitly recommend leaving it open for app lifetime.
 		speaker.Clear()
 		_ = stream.Close()
 		_ = f.Close()
-		speaker.Close()
 	}
 
 	return &Session{
