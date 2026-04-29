@@ -283,6 +283,7 @@ func (m *model) startLoadCmd(arg string) tea.Cmd {
 			NoiseVolume:  m.profile.NoiseVolume,
 			BinauralOn:   m.profile.BinauralOn,
 			BinauralBeat: m.profile.BinauralBeat,
+			Crossfeed:    m.profile.Crossfeed,
 			VolumeDb:     m.profile.VolumeDb,
 		}
 		sess, err := player.Start(path, cfg)

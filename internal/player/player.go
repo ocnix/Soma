@@ -32,6 +32,7 @@ type Config struct {
 	NoiseVolume  float64 // 0..1
 	BinauralOn   bool
 	BinauralBeat float64
+	Crossfeed    float64
 	VolumeDb     float64
 }
 
@@ -50,14 +51,24 @@ type Session struct {
 	sampleRate beep.SampleRate
 	live       bool
 
-	ctrl     *beep.Ctrl
-	eightd   *effect.EightD
-	reverb   *effect.Reverb
-	noise    *effect.Noise
-	binaural *effect.Binaural
-	volume   *effects.Volume
+	ctrl      *beep.Ctrl
+	eightd    *effect.EightD
+	reverb    *effect.Reverb
+	noise     *effect.Noise
+	binaural  *effect.Binaural
+	crossfeed *effect.Crossfeed
+	volume    *effects.Volume
 
 	startedAt time.Time
+}
+
+// SetCrossfeed adjusts the headphone crossfeed amount (0..1).
+func (s *Session) SetCrossfeed(v float64) {
+	if s.crossfeed == nil {
+		return
+	}
+	s.crossfeed.SetAmount(v)
+	s.State.SetCrossfeed(v)
 }
 
 // IsLive reports whether the session is a live (un-seekable, no-duration)
@@ -71,9 +82,13 @@ func dbToLog(db float64) float64 { return db * db2Log }
 
 // SpeakerSampleRate is the fixed rate the speaker is initialized at. All
 // tracks are resampled to this rate so we only call speaker.Init once for
-// the whole process — beep doesn't allow re-init (the underlying oto/v3
-// context can't be re-created) and silently fails the second `player.Start`.
-const SpeakerSampleRate beep.SampleRate = 44100
+// the whole process. 48 kHz matches the macOS CoreAudio DAC native rate,
+// avoiding a second resample stage in the OS audio path.
+const SpeakerSampleRate beep.SampleRate = 48000
+
+// ResampleQuality is the order of beep.Resample's polyphase filter.
+// 4 is the beep default; 6 is closer to "audiophile" with negligible CPU.
+const ResampleQuality = 6
 
 var (
 	speakerOnce    sync.Once
@@ -342,12 +357,13 @@ func Start(path string, cfg Config) (*Session, error) {
 	st.SetNoiseVolume(cfg.NoiseVolume)
 	st.SetBinauralOn(cfg.BinauralOn)
 	st.SetBinauralBeat(cfg.BinauralBeat)
+	st.SetCrossfeed(cfg.Crossfeed)
 	st.SetVolumeDb(cfg.VolumeDb)
 
 	// Resample to the speaker's fixed rate if the track's native rate differs.
 	var music beep.Streamer = stream
 	if format.SampleRate != SpeakerSampleRate {
-		music = beep.Resample(4, format.SampleRate, SpeakerSampleRate, music)
+		music = beep.Resample(ResampleQuality, format.SampleRate, SpeakerSampleRate, music)
 	}
 
 	// All downstream effects operate at the speaker's rate.
@@ -387,12 +403,21 @@ func Start(path string, cfg Config) (*Session, error) {
 	spectrum := effect.NewSpectrum(mixer, chainSR, 1024, 32, st)
 	metered := effect.NewMeter(spectrum, st)
 
-	vol := &effects.Volume{Streamer: metered, Base: 2, Volume: dbToLog(cfg.VolumeDb)}
+	cross := effect.NewCrossfeed(metered, chainSR, cfg.Crossfeed)
+
+	// Pre-volume headroom of -1.5 dB so the limiter rarely engages on
+	// well-mastered material; tanh limiter catches the rest.
+	const headroomDb = -1.5
+	headroom := &effects.Volume{Streamer: cross, Base: 2, Volume: dbToLog(headroomDb)}
+
+	vol := &effects.Volume{Streamer: headroom, Base: 2, Volume: dbToLog(cfg.VolumeDb)}
 	if cfg.VolumeDb <= -50 {
 		vol.Silent = true
 	}
 
-	ctrl := &beep.Ctrl{Streamer: vol}
+	limited := effect.NewLimiter(vol, 0.95)
+
+	ctrl := &beep.Ctrl{Streamer: limited}
 
 	speaker.Play(ctrl)
 
@@ -440,6 +465,7 @@ func Start(path string, cfg Config) (*Session, error) {
 		reverb:     reverb,
 		noise:      noise,
 		binaural:   binaural,
+		crossfeed:  cross,
 		volume:     vol,
 		startedAt:  time.Now(),
 	}, nil

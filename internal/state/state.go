@@ -34,6 +34,7 @@ type State struct {
 	noiseVolume  float64
 	binauralOn   bool
 	binauralBeat float64
+	crossfeed    float64
 
 	// metering
 	levelL float64
@@ -64,6 +65,7 @@ type Snapshot struct {
 	NoiseVolume  float64
 	BinauralOn   bool
 	BinauralBeat float64
+	Crossfeed    float64
 	LevelL       float64
 	LevelR       float64
 	Bands        []float64
@@ -92,6 +94,7 @@ func (s *State) SetNoiseMode(m string)         { s.mu.Lock(); s.noiseMode = m; s
 func (s *State) SetNoiseVolume(v float64)      { s.mu.Lock(); s.noiseVolume = v; s.mu.Unlock() }
 func (s *State) SetBinauralOn(on bool)         { s.mu.Lock(); s.binauralOn = on; s.mu.Unlock() }
 func (s *State) SetBinauralBeat(hz float64)    { s.mu.Lock(); s.binauralBeat = hz; s.mu.Unlock() }
+func (s *State) SetCrossfeed(v float64)        { s.mu.Lock(); s.crossfeed = v; s.mu.Unlock() }
 func (s *State) SetDuration(d time.Duration)   { s.mu.Lock(); s.duration = d; s.mu.Unlock() }
 
 func (s *State) SetBands(bands []float64) {
@@ -124,6 +127,7 @@ func (s *State) Snapshot() Snapshot {
 		NoiseVolume:  s.noiseVolume,
 		BinauralOn:   s.binauralOn,
 		BinauralBeat: s.binauralBeat,
+		Crossfeed:    s.crossfeed,
 		LevelL:       s.levelL,
 		LevelR:       s.levelR,
 		VolumeDb:     s.volumeDb,

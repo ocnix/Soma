@@ -445,6 +445,17 @@ func (m *model) labParams() []labParam {
 			},
 			Min: 0, Max: 1, Step: 0.05, Unit: "Hz",
 		},
+		{
+			Name: "crossfeed",
+			Get:  func(m *model) float64 { return m.profile.Crossfeed },
+			Set: func(m *model, v float64) {
+				m.profile.Crossfeed = v
+				if m.sess != nil {
+					m.sess.SetCrossfeed(v)
+				}
+			},
+			Min: 0, Max: 1, Step: 0.05, Unit: "",
+		},
 	}
 }
 

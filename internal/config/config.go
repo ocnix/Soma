@@ -23,6 +23,7 @@ type Profile struct {
 	NoiseVolume  float64 `json:"noise_volume"`
 	BinauralOn   bool    `json:"binaural_on"`
 	BinauralBeat float64 `json:"binaural_beat"` // Hz
+	Crossfeed    float64 `json:"crossfeed"`     // 0..1
 	Theme        string  `json:"theme"`
 	Viz          string  `json:"viz"` // "sphere" | "lissajous" | "tunnel" | "orbit"
 	VolumeDb     float64 `json:"volume_db"`
@@ -38,6 +39,7 @@ var Default = Profile{
 	NoiseVolume:  0.20,
 	BinauralOn:   false,
 	BinauralBeat: 8.0,
+	Crossfeed:    0.30, // gentle default — felt by IEM listeners, near-inaudible on speakers
 	Theme:        "coffee",
 	Viz:          "sphere",
 	VolumeDb:     0,
