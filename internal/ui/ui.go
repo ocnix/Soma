@@ -43,13 +43,15 @@ func Run(initialPath string, profile config.Profile) error {
 	lib := library.NewIndex()
 	lib.LoadCache()
 
+	recents := upgradeRecents(config.LoadRecents())
+
 	m := &model{
 		screen:        screenHome,
 		input:         ti,
 		inboxInput:    inboxInput,
 		spinner:       sp,
 		profile:       profile,
-		recents:       config.LoadRecents(),
+		recents:       recents,
 		recentsCursor: -1,
 		todayTotal:    config.TodayTotal(),
 		streak:        config.Streak(),
@@ -273,7 +275,9 @@ func (m *model) startLoadCmd(arg string) tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
+		title := source.DisplayTitle(arg, path)
 		cfg := player.Config{
+			Title:        title,
 			Rate:         m.profile.Rate,
 			Depth:        m.profile.Depth,
 			Shape:        m.profile.Shape,
@@ -293,15 +297,14 @@ func (m *model) startLoadCmd(arg string) tea.Cmd {
 		}
 		sess.OnClose(cleanup)
 
-		// Add to recents (best-effort).
-		go func(p string) {
-			title := titleFromPath(p)
+		// Add to recents with the resolved display title.
+		go func(t string) {
 			_ = config.AddRecent(config.RecentItem{
 				Source: arg, // store original arg so YouTube re-resolves cleanly
-				Title:  title,
+				Title:  t,
 				At:     time.Now(),
 			})
-		}(path)
+		}(title)
 
 		go func() {
 			<-sess.Done
@@ -340,4 +343,28 @@ func (m *model) endSession() {
 // saveProfile persists current profile to disk; called when settings change.
 func (m *model) saveProfile() {
 	_ = config.SaveProfile(m.profile)
+}
+
+// upgradeRecents rewrites any recents whose Title is still a raw YouTube ID
+// (left over from before the sidecar lookup) using the cached metadata.
+// Persists the migrated list so this runs once.
+func upgradeRecents(items []config.RecentItem) []config.RecentItem {
+	changed := false
+	for i, it := range items {
+		if source.LooksLikeYouTubeID(it.Title) {
+			if t := source.CachedTitle(it.Title); t != "" {
+				items[i].Title = t
+				changed = true
+			}
+		}
+	}
+	if changed {
+		// Re-save the upgraded list. AddRecent dedupes by source so we
+		// can't replay it; write the file directly via repeated AddRecent
+		// in reverse so order is preserved.
+		for i := len(items) - 1; i >= 0; i-- {
+			_ = config.AddRecent(items[i])
+		}
+	}
+	return items
 }

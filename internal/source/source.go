@@ -89,6 +89,44 @@ func CachedTitle(videoID string) string {
 	return ""
 }
 
+// DisplayTitle returns the human-readable title for a source. For YouTube
+// URLs it consults the sidecar metadata captured at download time. For
+// local files it strips directory + extension. Falls back to the raw arg.
+func DisplayTitle(arg, path string) string {
+	if isYouTubeURL(arg) {
+		if id := videoID(arg); id != "" {
+			if t := CachedTitle(id); t != "" {
+				return t
+			}
+		}
+	}
+	if path != "" {
+		base := filepath.Base(path)
+		return strings.TrimSuffix(base, filepath.Ext(base))
+	}
+	return arg
+}
+
+// LooksLikeYouTubeID reports whether s could be a raw YouTube ID (11 chars,
+// alphanumeric + - _). Used when migrating old recents whose Title was
+// stored as the cached filename.
+func LooksLikeYouTubeID(s string) bool {
+	if len(s) != 11 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func resolveYouTube(rawURL string) (string, func(), error) {
 	id := videoID(rawURL)
 	if id != "" {

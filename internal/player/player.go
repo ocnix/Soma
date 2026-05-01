@@ -22,6 +22,7 @@ import (
 // Config bundles the initial parameters for a session. Comes from the saved
 // profile on disk + any CLI overrides.
 type Config struct {
+	Title        string // optional display title; falls back to filename
 	Rate         float64
 	Depth        float64
 	Shape        string // "sine" | "random"
@@ -347,7 +348,10 @@ func Start(path string, cfg Config) (*Session, error) {
 		mode = "dry"
 	}
 	duration := format.SampleRate.D(stream.Len())
-	title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	title := cfg.Title
+	if title == "" {
+		title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	}
 	st := state.New(title, mode, cfg.Rate, duration)
 	st.SetDepth(cfg.Depth)
 	st.SetShape(cfg.Shape)

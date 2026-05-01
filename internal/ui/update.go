@@ -567,15 +567,4 @@ func (m *model) applyPreset(name string) {
 	m.saveProfile()
 }
 
-// titleFromPath strips directories and extension; used for recents.
-func titleFromPath(path string) string {
-	base := path
-	if i := strings.LastIndexAny(path, "/\\"); i >= 0 {
-		base = path[i+1:]
-	}
-	if i := strings.LastIndex(base, "."); i > 0 {
-		base = base[:i]
-	}
-	return base
-}
 
